@@ -120,24 +120,29 @@ typedef enum{
 // The PWM works based on the following settings:
 //     Timer reload interval -> determines the time period of one cycle
 //     Timer match value -> determines the duty cycle
-//                          range [0, timer reload interval]
-// The computation of the timer reload interval and dutycycle granularity
-// is as described below:
-// Timer tick frequency = 80 Mhz = 80000000 cycles/sec
-// For a time period of 0.5 ms,
-//      Timer reload interval = 80000000/2000 = 40000 cycles
-// To support steps of duty cycle update from [0, 255]
-//      duty cycle granularity = ceil(40000/255) = 157
-// Based on duty cycle granularity,
-//      New Timer reload interval = 255*157 = 40035
-//      New time period = 0.5004375 ms
-//      Timer match value = (update[0, 255] * duty cycle granularity)
+// The computation for PWM is as described below:
+// System frequency = 80 Mhz.
+// For a time period of 20 ms (Servo), 
+//    Timer reload value = 80,000,000/(1/20ms) = 1,600,000 cycles
+//    Cannot store this in 16-bit reload register, so must use prescaler
+//    1,600,000 = 0x186A00. Store lower 16 bits into Load, higher 8 bits into prescale
+//    PRESCALE = 0x18, RELOAD = 0x6A00
+// Servos rotate using duty cycle, 0.5ms for 0 degrees, 2.5ms for 180 degrees.
+//    Timer Match for 0.5ms: 80,000,000/(1/0.5ms) = 40,000 cycles
+//      40,000 = 0x9C40, MatchPrescale = 0x0, MatchReload = 0x9C40
+//    Timer Match for 2.5ms: 80,000m000/(1/2.5ms) = 200,000 cycles
+//      200,000 = 0x30D40, MatchPrescale = 0x3, MatchReload = 0x0D40
 */
-//#define TIMER_INTERVAL_RELOAD   40035 /* =(255*157)
 
-#define TIMER_PRESCALE 0x18
-#define TIMER_INTERVAL_RELOAD 0x6A00
-
+#define PWM_PRESCALE 0x18
+#define PWM_INTERVAL_RELOAD 0x6A00
+#define PWM_0_DEGREES 0x9C40UL          // Actual may be 0xC000
+#define PWM_180_DEGREES 0x30D54UL       // Actual may be 0x31400
+#define PWM_MATCH_PER_DEGREE (0x30D54UL - 0x9C40UL)/180  // Equates to 0x379 or 889
+// Defines for fingers
+#define FINGER_THUMB 1
+#define FINGER_INDEX 2
+#define FINGER_MIDDLE 3
 /*********************************** END OF PWM CONFIG ***********************/
 
 //****************************************************************************
@@ -155,6 +160,7 @@ void SetupTimerPWMMode(unsigned long ulBase, unsigned long ulTimer,
                        unsigned long ulConfig, unsigned char ucInvert);
 void InitPWMModules();
 void DeInitPWMModules();
+void UpdatePWM_Finger(int usDegrees, uint8_t finger);
 
 //*****************************************************************************
 //                 GLOBAL VARIABLES -- Start
@@ -821,10 +827,11 @@ int BsdTcpServerSetup(unsigned short usPort)
 int BsdTcpServerReceive()
 {
 	int iStatus;
+    /* TODO: Delete once new function PWM_update has been verified
 	int zeroDegrees_MatchPrescale = 0x0;
 	int zeroDegrees_Match = 0xC000;
 	int oneEightyDegrees_MatchPrescale = 0x3;
-	int oneEightyDegrees_Match = 0x1400;
+	int oneEightyDegrees_Match = 0x1400; */
 
 	int cmd;
 	while (1)
@@ -841,9 +848,13 @@ int BsdTcpServerReceive()
 	   {
 		   cmd = atoi(g_cBsdBuf);
 		   UART_PRINT("BUFF:%s\n", g_cBsdBuf);
+           UpdatePWM_Finger(cmd, FINGER_INDEX);
+           //MAP_UtilsDelay(13000000);        // Delay for approx 0.5 second
+
+           /* TODO: Delete once new function PWM_update has been verified
 		   if (cmd)
 		   {
-			   UART_PRINT("Receive cmd: %d - Turn 180 degrees.\n",cmd);
+			   UART_PRINT("Receive cmd: %d - Turn 180 degrees.\n",cmd);               
 			   MAP_TimerMatchSet(TIMERA2_BASE, TIMER_B, zeroDegrees_Match);
 			   MAP_TimerPrescaleMatchSet(TIMERA2_BASE, TIMER_B, zeroDegrees_MatchPrescale);
 			   MAP_UtilsDelay(80000000);
@@ -855,6 +866,7 @@ int BsdTcpServerReceive()
 			   MAP_TimerPrescaleMatchSet(TIMERA2_BASE, TIMER_B, oneEightyDegrees_MatchPrescale);
 			   MAP_UtilsDelay(80000000);
 		   }
+           */
 	   }
 
 	}
@@ -928,6 +940,7 @@ DisplayBanner(char * AppName)
     Report("\t\t *************************************************\n\r");
     Report("\n\n\n\r");
 }
+
 //****************************************************************************
 //
 //! Setup the timer in PWM mode
@@ -943,33 +956,22 @@ DisplayBanner(char * AppName)
 //! \return None.
 //
 //****************************************************************************
-
 void SetupTimerPWMMode(unsigned long ulBase, unsigned long ulTimer,
                        unsigned long ulConfig, unsigned char ucInvert)
 {
-    //
     // Set GPT - Configured Timer in PWM mode.
-    //
     MAP_TimerConfigure(ulBase,ulConfig);
-    //MAP_TimerPrescaleSet(ulBase,ulTimer,0);
 
-    MAP_TimerPrescaleSet(ulBase,ulTimer,TIMER_PRESCALE);		// Prescale by 100
-
-    //
     // Inverting the timer output if required
-    //
     MAP_TimerControlLevel(ulBase,ulTimer,ucInvert);
 
-    //
-    // Load value set to ~0.5 ms time period
-    //
-    MAP_TimerLoadSet(ulBase,ulTimer,TIMER_INTERVAL_RELOAD);
+    // Set the prescaler and load to obtain 20ms
+    MAP_TimerPrescaleSet(ulBase,ulTimer,PWM_PRESCALE);
+    MAP_TimerLoadSet(ulBase,ulTimer,PWM_INTERVAL_RELOAD);
 
-    //
     // Match value set so as to output level 0
-    //
-    MAP_TimerMatchSet(ulBase,ulTimer,TIMER_INTERVAL_RELOAD);
-
+    MAP_TimerPrescaleMatchSet(ulBase,ulTimer,PWM_PRESCALE);
+    MAP_TimerMatchSet(ulBase,ulTimer,PWM_INTERVAL_RELOAD);
 }
 
 //****************************************************************************
@@ -979,38 +981,36 @@ void SetupTimerPWMMode(unsigned long ulBase, unsigned long ulTimer,
 //! \param none
 //!
 //! This function sets up the folowing
-//!    1. TIMERA2 (TIMER B) as RED of RGB light
-//!    2. TIMERA3 (TIMER B) as YELLOW of RGB light
-//!    3. TIMERA3 (TIMER A) as GREEN of RGB light
+//!    1. TIMERA2 (TIMER B) as Index finger (also RED of RGB light)
+//!    2. TIMERA3 (TIMER A) as Thumb (also YELLOW of RGB light)
+//!    3. TIMERA3 (TIMER B) as Middle finger (also GREEN of RGB light)
 //!
 //! \return None.
 //
 //****************************************************************************
 void InitPWMModules()
 {
-    //
     // Initialization of timers to generate PWM output
-    //
+    // Already done in pinmux so commented out
     //MAP_PRCMPeripheralClkEnable(PRCM_TIMERA2, PRCM_RUN_MODE_CLK);
     //MAP_PRCMPeripheralClkEnable(PRCM_TIMERA3, PRCM_RUN_MODE_CLK);
 
-    //
-    // TIMERA2 (TIMER B) as RED of RGB light. GPIO 9 --> PWM_5
-    //
+    // TIMERA2 (TIMER B), Pin 64 as Index finger
+    // Also as RED of RGB light. GPIO 9 --> PWM_5
     SetupTimerPWMMode(TIMERA2_BASE, TIMER_B,
             (TIMER_CFG_SPLIT_PAIR | TIMER_CFG_B_PWM), 1);
 
-    //
-    // TIMERA3 (TIMER B) as YELLOW of RGB light. GPIO 10 --> PWM_6
-    //
+    // TIMERA3 (TIMER B), Pin 01 as Thumb
+    // Also as YELLOW of RGB light. GPIO 10 --> PWM_6
     SetupTimerPWMMode(TIMERA3_BASE, TIMER_A,
             (TIMER_CFG_SPLIT_PAIR | TIMER_CFG_A_PWM | TIMER_CFG_B_PWM), 1);
-    //
-    // TIMERA3 (TIMER A) as GREEN of RGB light. GPIO 11 --> PWM_7
-    //
+
+    // TIMERA3 (TIMER A), Pin 02 as Middle finger
+    // Also as GREEN of RGB light. GPIO 11 --> PWM_7
     SetupTimerPWMMode(TIMERA3_BASE, TIMER_B,
             (TIMER_CFG_SPLIT_PAIR | TIMER_CFG_A_PWM | TIMER_CFG_B_PWM), 1);
 
+    // Enable the timers
     MAP_TimerEnable(TIMERA2_BASE,TIMER_B);
     MAP_TimerEnable(TIMERA3_BASE,TIMER_A);
     MAP_TimerEnable(TIMERA3_BASE,TIMER_B);
@@ -1029,14 +1029,49 @@ void InitPWMModules()
 //****************************************************************************
 void DeInitPWMModules()
 {
-    //
     // Disable the peripherals
-    //
     MAP_TimerDisable(TIMERA2_BASE, TIMER_B);
     MAP_TimerDisable(TIMERA3_BASE, TIMER_A);
     MAP_TimerDisable(TIMERA3_BASE, TIMER_B);
     MAP_PRCMPeripheralClkDisable(PRCM_TIMERA2, PRCM_RUN_MODE_CLK);
     MAP_PRCMPeripheralClkDisable(PRCM_TIMERA3, PRCM_RUN_MODE_CLK);
+}
+
+//****************************************************************************
+//
+//! Updates the Duty Cycle of PWM output for approprite finger servo
+//
+//! \param Degrees -> 0 to 180, finger -> finger according to define
+//
+//! \return None.
+//
+//****************************************************************************
+void UpdatePWM_Finger(int usDegrees, uint8_t finger)
+{
+    uint32_t degrees_to_match;
+    uint16_t lower_16_bits;
+    uint8_t upper_8_bits;
+
+    degrees_to_match = PWM_0_DEGREES + usDegrees * PWM_MATCH_PER_DEGREE;
+    lower_16_bits = degrees_to_match & 0xFFFF;
+    upper_8_bits = (degrees_to_match & 0xFF0000) >> 16;
+
+    switch(finger) {
+        case FINGER_THUMB:
+            MAP_TimerMatchSet(TIMERA3_BASE, TIMER_A, lower_16_bits);
+            MAP_TimerPrescaleMatchSet(TIMERA3_BASE, TIMER_A, upper_8_bits);
+            break;
+        case FINGER_INDEX:
+            MAP_TimerMatchSet(TIMERA2_BASE, TIMER_B, lower_16_bits);
+            MAP_TimerPrescaleMatchSet(TIMERA2_BASE, TIMER_B, upper_8_bits);
+            break;
+        case FINGER_MIDDLE:
+            MAP_TimerMatchSet(TIMERA3_BASE, TIMER_B, lower_16_bits);
+            MAP_TimerPrescaleMatchSet(TIMERA3_BASE, TIMER_B, upper_8_bits);
+            break;
+        default:
+            UART_PRINT("[UpdatePWM_IndexFinger] Invalid Finger input\n");
+    }
 }
 //*****************************************************************************
 //

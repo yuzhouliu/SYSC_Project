@@ -55,35 +55,23 @@
 void
 PinMuxConfig(void)
 {
-    //
-    // Enable Peripheral Clocks 
-    //
+    /* Configure UART */
+    // Enable Peripheral Clocks
     MAP_PRCMPeripheralClkEnable(PRCM_UARTA0, PRCM_RUN_MODE_CLK);
-    MAP_PRCMPeripheralClkEnable(PRCM_TIMERA2, PRCM_RUN_MODE_CLK);
-    MAP_PRCMPeripheralClkEnable(PRCM_TIMERA3, PRCM_RUN_MODE_CLK);
-
-
-    //
     // Configure PIN_55 for UART0 UART0_TX
-    //
     MAP_PinTypeUART(PIN_55, PIN_MODE_3);
-
-    //
     // Configure PIN_57 for UART0 UART0_RX
-    //
     MAP_PinTypeUART(PIN_57, PIN_MODE_3);
 
-    // Configure PIN_64 for TIMERPWM5 GT_PWM05
-    //
-    MAP_PinTypeTimer(PIN_64, PIN_MODE_3);
 
-    //
-    // Configure PIN_01 for TIMERPWM6 GT_PWM06
-    //
+    /* Configure PWM output */
+    // Enable Peripheral Clocks
+    MAP_PRCMPeripheralClkEnable(PRCM_TIMERA2, PRCM_RUN_MODE_CLK);
+    MAP_PRCMPeripheralClkEnable(PRCM_TIMERA3, PRCM_RUN_MODE_CLK);
+    // Configure PIN_01 for TIMERPWM6 GT_PWM06, Thumb
     MAP_PinTypeTimer(PIN_01, PIN_MODE_3);
-
-    //
-    // Configure PIN_02 for TIMERPWM7 GT_PWM07
-    //
+    // Configure PIN_64 for TIMERPWM5 GT_PWM05, Index
+    MAP_PinTypeTimer(PIN_64, PIN_MODE_3);
+    // Configure PIN_02 for TIMERPWM7 GT_PWM07, Middle
     MAP_PinTypeTimer(PIN_02, PIN_MODE_3);
 }
