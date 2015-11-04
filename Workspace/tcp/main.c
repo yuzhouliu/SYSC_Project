@@ -57,6 +57,7 @@
 // Standard includes
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
 // simplelink includes 
 #include "simplelink.h"
